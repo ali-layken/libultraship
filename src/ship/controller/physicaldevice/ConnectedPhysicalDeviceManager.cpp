@@ -48,6 +48,18 @@ void ConnectedPhysicalDeviceManager::IgnoreVendorIdGlobally(uint16_t vid) {
     }
 }
 
+void ConnectedPhysicalDeviceManager::IgnoreDeviceGlobally(uint16_t vid, uint16_t pid) {
+    if (mIgnoredDevices.insert((static_cast<uint32_t>(vid) << 16) | pid).second) {
+        SPDLOG_INFO("ConnectedPhysicalDeviceManager: globally ignoring SDL gamepads {:04x}:{:04x} "
+                    "(claimed by another input backend)",
+                    vid, pid);
+    }
+}
+
+bool ConnectedPhysicalDeviceManager::IsDeviceIgnoredGlobally(uint16_t vid, uint16_t pid) const {
+    return mIgnoredDevices.contains((static_cast<uint32_t>(vid) << 16) | pid);
+}
+
 void ConnectedPhysicalDeviceManager::UnignoreVendorIdGlobally(uint16_t vid) {
     if (mIgnoredVendorIds.erase(vid) > 0) {
         SPDLOG_INFO("ConnectedPhysicalDeviceManager: no longer ignoring SDL gamepads with VID 0x{:04x}", vid);
@@ -111,6 +123,13 @@ void ConnectedPhysicalDeviceManager::RefreshConnectedSDLGamepads() {
             SPDLOG_INFO("ConnectedPhysicalDeviceManager: skipping SDL gamepad index={} VID=0x{:04x} (GUID: {}) "
                         "— globally ignored by another input backend",
                         i, devVid, deviceGuidCStr);
+            continue;
+        }
+
+        if (devVid != 0 && IsDeviceIgnoredGlobally(devVid, SDL_JoystickGetDeviceProduct(i))) {
+            SPDLOG_INFO("ConnectedPhysicalDeviceManager: skipping SDL gamepad index={} {:04x}:{:04x} — claimed by "
+                        "another input backend",
+                        i, devVid, SDL_JoystickGetDeviceProduct(i));
             continue;
         }
 

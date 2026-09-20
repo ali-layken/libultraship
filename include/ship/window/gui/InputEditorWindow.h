@@ -70,6 +70,7 @@ class InputEditorWindow : public GuiWindow {
     std::set<CONTROLLERBUTTONS_T> mDpadBitmasks;
     bool mInputEditorPopupOpen;
     void DrawSetDefaultsButton(uint8_t portIndex);
+    void DrawGCAdapterDeviceRow(uint8_t portIndex);
     void DrawClearAllButton(uint8_t portIndex);
 
     void DrawDeviceToggles(uint8_t portIndex);

@@ -7,6 +7,8 @@
 #include "ship/controller/controldevice/controller/mapping/mouse/MouseWheelToButtonMapping.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToButtonMapping.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToButtonMapping.h"
+#include "ship/controller/controldevice/controller/mapping/gcadapter/GCAdapterMappings.h"
+#include "libultraship/libultra/controller.h"
 #include "ship/controller/controldevice/controller/mapping/keyboard/KeyboardScancodes.h"
 #include "ship/controller/controldevice/controller/mapping/mouse/WheelHandler.h"
 #include "ship/controller/controldeck/ControlDeck.h"
@@ -54,6 +56,35 @@ std::shared_ptr<ControllerButtonMapping> ButtonMappingFactory::CreateButtonMappi
         }
 
         return std::make_shared<SDLAxisDirectionToButtonMapping>(portIndex, bitmask, sdlControllerAxis, axisDirection);
+    }
+
+    if (mappingClass == "GCAdapterButtonToButtonMapping") {
+        int32_t gcButton = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.GCButton", mappingCvarKey.c_str()).c_str(), -1);
+
+        if (gcButton < 0 || gcButton >= 16) {
+            Ship::Context::GetInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<GCAdapterButtonToButtonMapping>(portIndex, bitmask,
+                                                                static_cast<uint16_t>(1u << gcButton));
+    }
+
+    if (mappingClass == "GCAdapterAxisDirectionToButtonMapping") {
+        int32_t gcAxis = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.GCAxis", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t axisDirection = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.AxisDirection", mappingCvarKey.c_str()).c_str(), 0);
+
+        if (gcAxis < 0 || gcAxis >= GCAxis_Count || (axisDirection != -1 && axisDirection != 1)) {
+            Ship::Context::GetInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<GCAdapterAxisDirectionToButtonMapping>(portIndex, bitmask, gcAxis, axisDirection);
     }
 
     if (mappingClass == "KeyboardKeyToButtonMapping") {
@@ -161,6 +192,78 @@ ButtonMappingFactory::CreateButtonMappingFromSDLInput(uint8_t portIndex, CONTROL
     }
 
     return mapping;
+}
+
+// Default GameCube layout. The N64 has no X/Y/second shoulder, so this is a
+// judgment call; everything here is remappable in the input editor.
+//   A -> A, B -> B, Start -> Start, D-pad -> D-pad
+//   X, Y -> C-Up (jump); GC R (shield) -> Z, GC L -> L, GC Z -> R
+//   C-stick -> C-buttons
+std::vector<std::shared_ptr<ControllerButtonMapping>>
+ButtonMappingFactory::CreateDefaultGCAdapterButtonMappings(uint8_t portIndex, CONTROLLERBUTTONS_T bitmask) {
+    std::vector<std::shared_ptr<ControllerButtonMapping>> mappings;
+
+    static const std::vector<std::pair<CONTROLLERBUTTONS_T, uint16_t>> kButtons = {
+        { BTN_A, GC_A },
+        { BTN_B, GC_B },
+        { BTN_START, GC_START },
+        { BTN_CUP, GC_X },
+        { BTN_CUP, GC_Y },
+        { BTN_Z, GC_R },
+        { BTN_L, GC_L },
+        { BTN_R, GC_Z },
+        { BTN_DUP, GC_DPAD_UP },
+        { BTN_DDOWN, GC_DPAD_DOWN },
+        { BTN_DLEFT, GC_DPAD_LEFT },
+        { BTN_DRIGHT, GC_DPAD_RIGHT },
+    };
+    static const std::vector<std::tuple<CONTROLLERBUTTONS_T, GCAxis, int32_t>> kAxes = {
+        { BTN_CUP, GCAxis_CStickY, 1 },
+        { BTN_CDOWN, GCAxis_CStickY, -1 },
+        { BTN_CLEFT, GCAxis_CStickX, -1 },
+        { BTN_CRIGHT, GCAxis_CStickX, 1 },
+    };
+
+    for (const auto& [mask, gcButton] : kButtons) {
+        if (mask == bitmask) {
+            mappings.push_back(std::make_shared<GCAdapterButtonToButtonMapping>(portIndex, bitmask, gcButton));
+        }
+    }
+    for (const auto& [mask, axis, direction] : kAxes) {
+        if (mask == bitmask) {
+            mappings.push_back(
+                std::make_shared<GCAdapterAxisDirectionToButtonMapping>(portIndex, bitmask, axis, direction));
+        }
+    }
+
+    return mappings;
+}
+
+std::shared_ptr<ControllerButtonMapping>
+ButtonMappingFactory::CreateButtonMappingFromGCAdapterInput(uint8_t portIndex, CONTROLLERBUTTONS_T bitmask) {
+    auto adapter = Context::GetInstance()->GetControlDeck()->GetGCAdapter();
+    if (adapter == nullptr) {
+        return nullptr;
+    }
+
+    for (const auto& snap : adapter->GetSnapshotsForGamePort(portIndex)) {
+        for (uint16_t bit = 1; bit != 0 && bit <= GC_L; bit <<= 1) {
+            if (snap.State.Buttons & bit) {
+                return std::make_shared<GCAdapterButtonToButtonMapping>(portIndex, bitmask, bit);
+            }
+        }
+
+        for (int i = 0; i < GCAxis_Count; i++) {
+            const auto axis = static_cast<GCAxis>(i);
+            for (int direction : { -1, 1 }) {
+                if (GCAdapter::AxisMagnitude(snap, axis, direction) > 0.7f) {
+                    return std::make_shared<GCAdapterAxisDirectionToButtonMapping>(portIndex, bitmask, axis, direction);
+                }
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 std::shared_ptr<ControllerButtonMapping>

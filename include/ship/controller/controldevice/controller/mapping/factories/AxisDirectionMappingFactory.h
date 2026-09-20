@@ -20,6 +20,12 @@ class AxisDirectionMappingFactory {
     static std::shared_ptr<ControllerAxisDirectionMapping>
     CreateAxisDirectionMappingFromSDLInput(uint8_t portIndex, StickIndex stickIndex, Direction direction);
 
+    static std::vector<std::shared_ptr<ControllerAxisDirectionMapping>>
+    CreateDefaultGCAdapterAxisDirectionMappings(uint8_t portIndex, StickIndex stickIndex);
+
+    static std::shared_ptr<ControllerAxisDirectionMapping>
+    CreateAxisDirectionMappingFromGCAdapterInput(uint8_t portIndex, StickIndex stickIndex, Direction direction);
+
     static std::shared_ptr<ControllerAxisDirectionMapping>
     CreateAxisDirectionMappingFromMouseWheelInput(uint8_t portIndex, StickIndex stickIndex, Direction direction);
 };

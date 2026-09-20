@@ -1,4 +1,7 @@
 #include "ship/controller/controldevice/controller/ControllerRumble.h"
+#include "ship/controller/controldevice/controller/mapping/gcadapter/GCAdapterRumbleMapping.h"
+#include "ship/controller/controldeck/ControlDeck.h"
+#include "ship/controller/gcadapter/GCAdapter.h"
 
 #include "ship/Context.h"
 #include "ship/config/ConsoleVariable.h"
@@ -90,6 +93,15 @@ void ControllerRumble::ClearAllMappingsForDeviceType(PhysicalDeviceType physical
 void ControllerRumble::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) {
     for (auto mapping : RumbleMappingFactory::CreateDefaultSDLRumbleMappings(physicalDeviceType, mPortIndex)) {
         AddRumbleMapping(mapping);
+    }
+
+    if (physicalDeviceType == PhysicalDeviceType::GameCubeAdapter) {
+        auto adapter = Context::GetInstance()->GetControlDeck()->GetGCAdapter();
+        if (adapter != nullptr && mPortIndex < gGCAdapterPorts) {
+            AddRumbleMapping(std::make_shared<GCAdapterRumbleMapping>(
+                mPortIndex, DEFAULT_LOW_FREQUENCY_RUMBLE_PERCENTAGE, DEFAULT_HIGH_FREQUENCY_RUMBLE_PERCENTAGE,
+                std::weak_ptr<GCAdapter>(adapter), mPortIndex));
+        }
     }
 
     for (auto [id, mapping] : mRumbleMappings) {

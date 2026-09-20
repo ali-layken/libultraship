@@ -46,6 +46,7 @@ int32_t osContInit(OSMesgQueue* mq, uint8_t* controllerBits, OSContStatus* statu
     // win the race. Internally PreInitRaphnet also globally skip-lists the
     // claimed VIDs so the SDL refresh below ignores them.
     Ship::Context::GetInstance()->GetControlDeck()->PreInitRaphnet();
+    Ship::Context::GetInstance()->GetControlDeck()->PreInitGCAdapter();
 
     SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
 #if defined(_WIN32)

@@ -79,6 +79,57 @@ target_link_libraries(libultraship PUBLIC spdlog::spdlog)
 # hidapi for native Raphnet N64 USB adapter (vendored via FetchContent in cmake/dependencies/common.cmake).
 target_link_libraries(libultraship PRIVATE hidapi::hidapi)
 
+# libusb for the native GameCube adapter (WUP-028) driver. Optional: without it
+# GCAdapter compiles to a stub and the adapter is left to SDL as before.
+#   * Linux/BSD: use the system libusb-1.0 (pkg-config) when present.
+#   * Everything else (Windows, macOS, or Linux without libusb-dev): build libusb
+#     statically from libusb-cmake, so no DLL/dylib needs to ship with the game.
+#   * Not available on Android, iOS or the UWP/Xbox build (no raw USB access).
+# On Windows the adapter must be bound to the WinUSB driver (e.g. via Zadig or
+# Dolphin's driver installer) for libusb to open it.
+option(LUS_GCADAPTER "Native GameCube adapter support (libusb)" ON)
+option(LUS_GCADAPTER_FETCH_LIBUSB "Always build libusb from source instead of using the system one" OFF)
+if (LUS_GCADAPTER AND NOT CMAKE_SYSTEM_NAME STREQUAL "Android" AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS"
+    AND NOT BATTLESHIP_UWP)
+    set(_LUS_LIBUSB_TARGET "")
+    if (NOT LUS_GCADAPTER_FETCH_LIBUSB AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME MATCHES "BSD"))
+        find_package(PkgConfig QUIET)
+        if (PkgConfig_FOUND)
+            pkg_check_modules(LIBUSB QUIET IMPORTED_TARGET libusb-1.0)
+        endif()
+        if (TARGET PkgConfig::LIBUSB)
+            set(_LUS_LIBUSB_TARGET PkgConfig::LIBUSB)
+            message(STATUS "GameCube adapter: system libusb ${LIBUSB_VERSION}")
+        endif()
+    endif()
+    if (_LUS_LIBUSB_TARGET STREQUAL "")
+        include(FetchContent)
+        set(LIBUSB_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+        set(LIBUSB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(LIBUSB_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+        set(LIBUSB_INSTALL_TARGETS OFF CACHE BOOL "" FORCE)
+        # netlink hotplug instead of libudev: no extra dev package, and avoids
+        # the udev sysattr stalls behind issue #137.
+        set(LIBUSB_ENABLE_UDEV OFF CACHE BOOL "" FORCE)
+        FetchContent_Declare(
+            libusb_cmake
+            GIT_REPOSITORY https://github.com/libusb/libusb-cmake.git
+            GIT_TAG v1.0.30-0
+        )
+        FetchContent_MakeAvailable(libusb_cmake)
+        if (TARGET usb-1.0)
+            set(_LUS_LIBUSB_TARGET usb-1.0)
+            message(STATUS "GameCube adapter: libusb built from source (libusb-cmake)")
+        endif()
+    endif()
+    if (NOT _LUS_LIBUSB_TARGET STREQUAL "")
+        target_link_libraries(libultraship PRIVATE ${_LUS_LIBUSB_TARGET})
+        target_compile_definitions(libultraship PRIVATE LUS_HAS_GCADAPTER)
+    else()
+        message(STATUS "GameCube adapter: libusb unavailable, native support disabled")
+    endif()
+endif()
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)

@@ -10,7 +10,8 @@
 
 namespace Ship {
 
-class RaphnetPhysicalDeviceManager;  // ship/controller/raphnet/RaphnetPhysicalDeviceManager.h
+class GCAdapter;                    // ship/controller/gcadapter/GCAdapter.h
+class RaphnetPhysicalDeviceManager; // ship/controller/raphnet/RaphnetPhysicalDeviceManager.h
 
 class ControlDeck {
   public:
@@ -31,6 +32,24 @@ class ControlDeck {
     // calls hid_exit. MUST be called BEFORE StopAllRumble + sContext.reset
     // at shutdown.
     void ShutdownRaphnet();
+
+    // Starts the native GameCube adapter driver (libusb). Safe to call when no
+    // adapter is attached — it waits for a hotplug. Gated by CVAR
+    // gControllers.GCAdapter.Enabled (default 1). Call before Init().
+    void PreInitGCAdapter();
+
+    // Stops the adapter thread and turns rumble off. Call before StopAllRumble.
+    void ShutdownGCAdapter();
+
+    std::shared_ptr<GCAdapter> GetGCAdapter();
+
+    // Recomputes every game port's adapter routing from the saved CVARs and
+    // pushes it to the driver. A port with no saved route falls back to
+    // "adapter port N feeds game port N", but only when no other port claims
+    // that adapter port explicitly — otherwise the implicit default would
+    // silently double up on a controller another port already owns. Call after
+    // changing any Port*.GCAdapter.AdapterPorts CVAR.
+    void ApplyGCAdapterRouting();
 
     void Init(uint8_t* controllerBits);
     virtual void WriteToPad(void* pads) = 0;
@@ -61,6 +80,7 @@ class ControlDeck {
     std::unordered_map<int32_t, bool> mGameInputBlockers;
     std::shared_ptr<ConnectedPhysicalDeviceManager> mConnectedPhysicalDeviceManager;
     std::shared_ptr<RaphnetPhysicalDeviceManager> mRaphnetPhysicalDeviceManager;
+    std::shared_ptr<GCAdapter> mGCAdapter;
     std::shared_ptr<GlobalSDLDeviceSettings> mGlobalSDLDeviceSettings;
     std::shared_ptr<ControllerDefaultMappings> mControllerDefaultMappings;
     std::unordered_map<CONTROLLERBUTTONS_T, std::string> mButtonNames;

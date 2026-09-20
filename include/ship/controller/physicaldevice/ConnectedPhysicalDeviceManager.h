@@ -28,6 +28,10 @@ class ConnectedPhysicalDeviceManager {
     // Windows DirectInput tends to grab first, breaking native polling.
     // Refusing in RefreshConnectedSDLGamepads keeps SDL out entirely.
     void IgnoreVendorIdGlobally(uint16_t vid);
+    // Ignore a single VID:PID pair (e.g. the GameCube adapter, which we drive
+    // via libusb) without ignoring the vendor's other devices.
+    void IgnoreDeviceGlobally(uint16_t vid, uint16_t pid);
+    bool IsDeviceIgnoredGlobally(uint16_t vid, uint16_t pid) const;
     void UnignoreVendorIdGlobally(uint16_t vid);
     bool IsVendorIdIgnoredGlobally(uint16_t vid) const;
 
@@ -40,5 +44,6 @@ class ConnectedPhysicalDeviceManager {
     std::unordered_map<int32_t, std::string> mConnectedSDLGamepadNames;
     std::unordered_map<uint8_t, std::unordered_set<int32_t>> mIgnoredInstanceIds;
     std::unordered_set<uint16_t> mIgnoredVendorIds;
+    std::unordered_set<uint32_t> mIgnoredDevices; // (vid << 16) | pid
 };
 } // namespace Ship

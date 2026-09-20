@@ -6,6 +6,7 @@
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToButtonMapping.h"
 #include "ship/controller/controldeck/ControlDeck.h"
 #include "ship/controller/raphnet/RaphnetPhysicalDeviceManager.h"
+#include "ship/controller/gcadapter/GCAdapter.h"
 #include "libultraship/libultra/controller.h"
 
 #define SCALE_IMGUI_SIZE(value) ((value / 13.0f) * ImGui::GetFontSize())
@@ -246,8 +247,10 @@ void InputEditorWindow::DrawButtonLineEditMappingButton(uint8_t port, CONTROLLER
             icon = ICON_FA_GAMEPAD;
             break;
         case MAPPING_TYPE_KEYBOARD:
-        case MAPPING_TYPE_MOUSE:
             icon = ICON_FA_KEYBOARD_O;
+            break;
+        case MAPPING_TYPE_MOUSE:
+            icon = ICON_FA_MOUSE_POINTER;
             break;
         case MAPPING_TYPE_UNKNOWN:
             icon = ICON_FA_BUG;
@@ -509,8 +512,10 @@ void InputEditorWindow::DrawStickDirectionLineEditMappingButton(uint8_t port, ui
             icon = ICON_FA_GAMEPAD;
             break;
         case MAPPING_TYPE_KEYBOARD:
-        case MAPPING_TYPE_MOUSE:
             icon = ICON_FA_KEYBOARD_O;
+            break;
+        case MAPPING_TYPE_MOUSE:
+            icon = ICON_FA_MOUSE_POINTER;
             break;
         case MAPPING_TYPE_UNKNOWN:
             icon = ICON_FA_BUG;
@@ -1192,7 +1197,7 @@ void InputEditorWindow::DrawDeviceToggles(uint8_t portIndex) {
     GetButtonColorsForPhysicalDeviceType(PhysicalDeviceType::Mouse, mouseButtonColor, mouseButtonHoveredColor);
     ImGui::PushStyleColor(ImGuiCol_Button, mouseButtonColor);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, mouseButtonHoveredColor);
-    ImGui::Button(StringHelper::Sprintf("%s Mouse", ICON_FA_KEYBOARD_O).c_str());
+    ImGui::Button(StringHelper::Sprintf("%s Mouse", ICON_FA_MOUSE_POINTER).c_str());
     ImGui::PopStyleColor();
     ImGui::PopStyleColor();
 
@@ -1245,6 +1250,69 @@ void InputEditorWindow::DrawDeviceToggles(uint8_t portIndex) {
         ImGui::PopStyleColor();
         ImGui::PopStyleColor();
         ImGui::PopItemFlag();
+    }
+    DrawGCAdapterDeviceRow(portIndex);
+}
+
+// One row per controller plugged into the native GameCube adapter, mirroring the
+// SDL gamepad rows: the checkbox routes that adapter port to this game port.
+// Mappings for it appear in the columns below like any other device.
+void InputEditorWindow::DrawGCAdapterDeviceRow(uint8_t portIndex) {
+    auto gc = Context::GetInstance()->GetControlDeck()->GetGCAdapter();
+    if (gc == nullptr) {
+        return;
+    }
+
+    ImVec4 color = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+    ImVec4 hovered = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
+    GetButtonColorsForPhysicalDeviceType(PhysicalDeviceType::GameCubeAdapter, color, hovered);
+
+    auto drawChip = [&](const std::string& label) {
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+        ImGui::PushStyleColor(ImGuiCol_Button, color);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, hovered);
+        ImGui::Button(label.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopStyleColor();
+        ImGui::PopItemFlag();
+    };
+
+    if (!gc->IsConnected()) {
+        drawChip(
+            StringHelper::Sprintf("%s GameCube Adapter (not detected)###gcAdapterNone_%d", ICON_FA_GAMEPAD, portIndex));
+        return;
+    }
+
+    bool anyController = false;
+    for (uint8_t adapterPort = 0; adapterPort < gGCAdapterPorts; ++adapterPort) {
+        const GCControllerType type = gc->GetPortType(adapterPort);
+        if (type == GCControllerType::None) {
+            continue;
+        }
+        anyController = true;
+
+        uint8_t mask = gc->GetPortRouting(portIndex);
+        bool routed = (mask & (1 << adapterPort)) != 0;
+        if (ImGui::Checkbox(StringHelper::Sprintf("###gcAdapterPort_%d_%d", portIndex, adapterPort).c_str(), &routed)) {
+            mask = routed ? (mask | (1 << adapterPort)) : (mask & ~(1 << adapterPort));
+            auto cvars = Context::GetInstance()->GetConsoleVariables();
+            cvars->SetInteger(
+                StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.GCAdapter.AdapterPorts", portIndex + 1).c_str(),
+                mask);
+            cvars->Save();
+            // Claiming an adapter port here can retire another port's implicit
+            // default, so re-resolve all four rather than just this one.
+            Context::GetInstance()->GetControlDeck()->ApplyGCAdapterRouting();
+        }
+        ImGui::SameLine();
+        drawChip(StringHelper::Sprintf("%s GameCube %s (adapter port %d)###gcAdapterName_%d_%d", ICON_FA_GAMEPAD,
+                                       type == GCControllerType::Wavebird ? "WaveBird" : "Controller", adapterPort + 1,
+                                       portIndex, adapterPort));
+    }
+
+    if (!anyController) {
+        drawChip(StringHelper::Sprintf("%s GameCube Adapter (no controller connected)###gcAdapterEmpty_%d",
+                                       ICON_FA_GAMEPAD, portIndex));
     }
 }
 
@@ -1401,7 +1469,7 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
         }
         ImGui::PushStyleColor(ImGuiCol_Button, BUTTON_COLOR_MOUSE_BEIGE);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BUTTON_COLOR_MOUSE_BEIGE_HOVERED);
-        if (ImGui::Button(StringHelper::Sprintf("%s Mouse", ICON_FA_KEYBOARD_O).c_str())) {
+        if (ImGui::Button(StringHelper::Sprintf("%s Mouse", ICON_FA_MOUSE_POINTER).c_str())) {
             ImGui::OpenPopup("Set Defaults for Mouse");
         }
         ImGui::PopStyleColor();
@@ -1451,6 +1519,45 @@ void InputEditorWindow::DrawSetDefaultsButton(uint8_t portIndex) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
+        }
+
+        if (auto gc = Ship::Context::GetInstance()->GetControlDeck()->GetGCAdapter()) {
+            auto gcButtonColor = ImGui::GetStyleColorVec4(ImGuiCol_Button);
+            auto gcButtonHoveredColor = ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered);
+            GetButtonColorsForPhysicalDeviceType(Ship::PhysicalDeviceType::GameCubeAdapter, gcButtonColor,
+                                                 gcButtonHoveredColor);
+            ImGui::PushStyleColor(ImGuiCol_Button, gcButtonColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, gcButtonHoveredColor);
+            if (ImGui::Button(StringHelper::Sprintf("%s %s", ICON_FA_GAMEPAD, "GameCube Adapter").c_str())) {
+                ImGui::OpenPopup("Set Defaults for GameCube Adapter");
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopStyleColor();
+            if (ImGui::BeginPopupModal("Set Defaults for GameCube Adapter", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("This will clear all existing mappings for\nGameCube Adapter on port %d.\n\nContinue?",
+                            portIndex + 1);
+                if (ImGui::Button("Cancel")) {
+                    shouldClose = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::Button("Set defaults")) {
+                    auto controller = Ship::Context::GetInstance()->GetControlDeck()->GetControllerByPort(portIndex);
+                    controller->ClearAllMappingsForDeviceType(Ship::PhysicalDeviceType::GameCubeAdapter);
+                    controller->AddDefaultMappings(Ship::PhysicalDeviceType::GameCubeAdapter);
+                    // Drop the saved route so this port goes back to the
+                    // implicit "adapter port N feeds game port N" — which
+                    // yields if another port already claims adapter port N.
+                    auto cvars = Ship::Context::GetInstance()->GetConsoleVariables();
+                    cvars->ClearVariable(
+                        StringHelper::Sprintf(CVAR_PREFIX_CONTROLLERS ".Port%d.GCAdapter.AdapterPorts", portIndex + 1)
+                            .c_str());
+                    cvars->Save();
+                    Ship::Context::GetInstance()->GetControlDeck()->ApplyGCAdapterRouting();
+                    shouldClose = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            }
         }
 
         if (ImGui::Button("Cancel") || shouldClose) {

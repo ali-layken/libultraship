@@ -5,6 +5,7 @@
 
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLButtonToAxisDirectionMapping.h"
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLAxisDirectionToAxisDirectionMapping.h"
+#include "ship/controller/controldevice/controller/mapping/gcadapter/GCAdapterMappings.h"
 
 #include "ship/config/ConsoleVariable.h"
 #include "ship/utils/StringHelper.h"
@@ -59,6 +60,42 @@ AxisDirectionMappingFactory::CreateAxisDirectionMappingFromConfig(uint8_t portIn
 
         return std::make_shared<SDLButtonToAxisDirectionMapping>(
             portIndex, stickIndex, static_cast<Direction>(direction), sdlControllerButton);
+    }
+
+    if (mappingClass == "GCAdapterAxisDirectionToAxisDirectionMapping") {
+        int32_t direction = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t gcAxis = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.GCAxis", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t axisDirection = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.AxisDirection", mappingCvarKey.c_str()).c_str(), 0);
+
+        if ((direction != LEFT && direction != RIGHT && direction != UP && direction != DOWN) || gcAxis < 0 ||
+            gcAxis >= GCAxis_Count || (axisDirection != -1 && axisDirection != 1)) {
+            Ship::Context::GetInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(
+            portIndex, stickIndex, static_cast<Direction>(direction), gcAxis, axisDirection);
+    }
+
+    if (mappingClass == "GCAdapterButtonToAxisDirectionMapping") {
+        int32_t direction = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.Direction", mappingCvarKey.c_str()).c_str(), -1);
+        int32_t gcButton = Ship::Context::GetInstance()->GetConsoleVariables()->GetInteger(
+            StringHelper::Sprintf("%s.GCButton", mappingCvarKey.c_str()).c_str(), -1);
+
+        if ((direction != LEFT && direction != RIGHT && direction != UP && direction != DOWN) || gcButton < 0 ||
+            gcButton >= 16) {
+            Ship::Context::GetInstance()->GetConsoleVariables()->ClearVariable(mappingCvarKey.c_str());
+            Ship::Context::GetInstance()->GetConsoleVariables()->Save();
+            return nullptr;
+        }
+
+        return std::make_shared<GCAdapterButtonToAxisDirectionMapping>(
+            portIndex, stickIndex, static_cast<Direction>(direction), static_cast<uint16_t>(1u << gcButton));
     }
 
     if (mappingClass == "KeyboardKeyToAxisDirectionMapping") {
@@ -158,6 +195,55 @@ AxisDirectionMappingFactory::CreateDefaultSDLAxisDirectionMappings(uint8_t portI
     }
 
     return mappings;
+}
+
+// Left stick <- GC main stick (analog). The N64 "additional" stick has no
+// default GC mapping; the C-stick drives the C-buttons instead.
+std::vector<std::shared_ptr<ControllerAxisDirectionMapping>>
+AxisDirectionMappingFactory::CreateDefaultGCAdapterAxisDirectionMappings(uint8_t portIndex, StickIndex stickIndex) {
+    std::vector<std::shared_ptr<ControllerAxisDirectionMapping>> mappings;
+    if (stickIndex != LEFT_STICK) {
+        return mappings;
+    }
+
+    mappings.push_back(
+        std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(portIndex, stickIndex, LEFT, GCAxis_StickX, -1));
+    mappings.push_back(
+        std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(portIndex, stickIndex, RIGHT, GCAxis_StickX, 1));
+    mappings.push_back(
+        std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(portIndex, stickIndex, UP, GCAxis_StickY, 1));
+    mappings.push_back(
+        std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(portIndex, stickIndex, DOWN, GCAxis_StickY, -1));
+    return mappings;
+}
+
+std::shared_ptr<ControllerAxisDirectionMapping>
+AxisDirectionMappingFactory::CreateAxisDirectionMappingFromGCAdapterInput(uint8_t portIndex, StickIndex stickIndex,
+                                                                          Direction direction) {
+    auto adapter = Context::GetInstance()->GetControlDeck()->GetGCAdapter();
+    if (adapter == nullptr) {
+        return nullptr;
+    }
+
+    for (const auto& snap : adapter->GetSnapshotsForGamePort(portIndex)) {
+        for (uint16_t bit = 1; bit != 0 && bit <= GC_L; bit <<= 1) {
+            if (snap.State.Buttons & bit) {
+                return std::make_shared<GCAdapterButtonToAxisDirectionMapping>(portIndex, stickIndex, direction, bit);
+            }
+        }
+
+        for (int i = 0; i < GCAxis_Count; i++) {
+            const auto axis = static_cast<GCAxis>(i);
+            for (int axisDirection : { -1, 1 }) {
+                if (GCAdapter::AxisMagnitude(snap, axis, axisDirection) > 0.7f) {
+                    return std::make_shared<GCAdapterAxisDirectionToAxisDirectionMapping>(
+                        portIndex, stickIndex, direction, axis, axisDirection);
+                }
+            }
+        }
+    }
+
+    return nullptr;
 }
 
 std::shared_ptr<ControllerAxisDirectionMapping>

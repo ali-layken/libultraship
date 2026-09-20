@@ -168,6 +168,10 @@ bool ControllerButton::AddOrEditButtonMappingFromRawPress(CONTROLLERBUTTONS_T bi
     }
 
     if (mapping == nullptr) {
+        mapping = ButtonMappingFactory::CreateButtonMappingFromGCAdapterInput(mPortIndex, bitmask);
+    }
+
+    if (mapping == nullptr) {
         return false;
     }
 
@@ -238,6 +242,12 @@ bool ControllerButton::ProcessMouseButtonEvent(bool isPressed, MouseBtn button) 
 void ControllerButton::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) {
     if (physicalDeviceType == PhysicalDeviceType::SDLGamepad) {
         for (auto mapping : ButtonMappingFactory::CreateDefaultSDLButtonMappings(mPortIndex, mBitmask)) {
+            AddButtonMapping(mapping);
+        }
+    }
+
+    if (physicalDeviceType == PhysicalDeviceType::GameCubeAdapter) {
+        for (auto mapping : ButtonMappingFactory::CreateDefaultGCAdapterButtonMappings(mPortIndex, mBitmask)) {
             AddButtonMapping(mapping);
         }
     }

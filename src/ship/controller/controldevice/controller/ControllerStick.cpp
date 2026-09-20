@@ -134,6 +134,13 @@ void ControllerStick::AddDefaultMappings(PhysicalDeviceType physicalDeviceType) 
         }
     }
 
+    if (physicalDeviceType == PhysicalDeviceType::GameCubeAdapter) {
+        for (auto mapping :
+             AxisDirectionMappingFactory::CreateDefaultGCAdapterAxisDirectionMappings(mPortIndex, mStickIndex)) {
+            AddAxisDirectionMapping(mapping->GetDirection(), mapping);
+        }
+    }
+
     if (physicalDeviceType == PhysicalDeviceType::Keyboard) {
         for (auto mapping :
              AxisDirectionMappingFactory::CreateDefaultKeyboardAxisDirectionMappings(mPortIndex, mStickIndex)) {
@@ -292,6 +299,11 @@ bool ControllerStick::AddOrEditAxisDirectionMappingFromRawPress(Direction direct
     if (mapping == nullptr) {
         mapping =
             AxisDirectionMappingFactory::CreateAxisDirectionMappingFromSDLInput(mPortIndex, mStickIndex, direction);
+    }
+
+    if (mapping == nullptr) {
+        mapping = AxisDirectionMappingFactory::CreateAxisDirectionMappingFromGCAdapterInput(mPortIndex, mStickIndex,
+                                                                                            direction);
     }
 
     if (mapping == nullptr) {
