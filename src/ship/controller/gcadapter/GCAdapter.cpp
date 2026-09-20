@@ -115,6 +115,7 @@ struct GCAdapter::Impl {
     std::array<uint8_t, gGCAdapterPorts> Routing = { 1 << 0, 1 << 1, 1 << 2, 1 << 3 };
 
     bool AccessWarned = false;
+    bool OpenWarned = false;
     // Device is present but open/init failed or the link dropped; retry with backoff even under hotplug,
     // since the arrival callback only fires once per attach and transient IO errors are common on macOS.
     bool RetryPending = false;
@@ -131,12 +132,63 @@ struct GCAdapter::Impl {
     void Run();
 };
 
+// Platform-specific fix for "the adapter is plugged in but we cannot open or
+// claim it". Kept next to the warnings so the two stay in sync with
+// BUILDING.md's "GameCube adapter device access" section.
+#if defined(_WIN32)
+constexpr const char* kGCAccessHint = "the adapter must be bound to the WinUSB driver (use Zadig or Dolphin's "
+                                      "adapter driver installer)";
+#elif defined(__linux__)
+constexpr const char* kGCAccessHint = "install a udev rule granting access, e.g. SUBSYSTEM==\"usb\", "
+                                      "ATTRS{idVendor}==\"057e\", ATTRS{idProduct}==\"0337\", MODE=\"0660\", "
+                                      "TAG+=\"uaccess\" in /etc/udev/rules.d/51-gcadapter.rules, then replug "
+                                      "(see BUILDING.md)";
+#else
+constexpr const char* kGCAccessHint = "another process may already own the device";
+#endif
+
 bool GCAdapter::Impl::TryOpen() {
-    libusb_device_handle* h = libusb_open_device_with_vid_pid(Ctx, gGCAdapterVid, gGCAdapterPid);
-    if (h == nullptr) {
+    // Enumerate rather than using libusb_open_device_with_vid_pid: that helper
+    // collapses "not plugged in" and "plugged in but we are not allowed to open
+    // it" into a null handle, which used to make a permissions problem look
+    // exactly like an absent adapter and produce no log line at all.
+    libusb_device** list = nullptr;
+    const ssize_t count = libusb_get_device_list(Ctx, &list);
+    if (count < 0) {
         RetryPending = false;
         return false;
     }
+
+    libusb_device* dev = nullptr;
+    for (ssize_t i = 0; i < count; ++i) {
+        libusb_device_descriptor desc;
+        if (libusb_get_device_descriptor(list[i], &desc) == 0 && desc.idVendor == gGCAdapterVid &&
+            desc.idProduct == gGCAdapterPid) {
+            dev = list[i];
+            break;
+        }
+    }
+
+    if (dev == nullptr) {
+        libusb_free_device_list(list, 1);
+        OpenWarned = false; // so a later failure is reported again
+        RetryPending = false;
+        return false;
+    }
+
+    libusb_device_handle* h = nullptr;
+    const int openRc = libusb_open(dev, &h);
+    libusb_free_device_list(list, 1);
+    if (openRc != 0) {
+        if (!OpenWarned) {
+            OpenWarned = true;
+            SPDLOG_WARN("[gcadapter] adapter is connected but could not be opened: {}. To use it natively, {}.",
+                        libusb_error_name(openRc), kGCAccessHint);
+        }
+        RetryPending = true; // device is present; keep retrying
+        return false;
+    }
+    OpenWarned = false;
 
     // Detach usbhid/hid-generic on Linux; reattached automatically on close.
     libusb_set_auto_detach_kernel_driver(h, 1);
@@ -144,11 +196,9 @@ bool GCAdapter::Impl::TryOpen() {
     if (rc != 0) {
         if (!AccessWarned) {
             AccessWarned = true;
-            SPDLOG_WARN("[gcadapter] found adapter but could not claim it: {}. On Linux this is usually a "
-                        "missing udev rule (SUBSYSTEM==\"usb\", ATTRS{{idVendor}}==\"057e\", "
-                        "ATTRS{{idProduct}}==\"0337\", MODE=\"0666\"); on Windows the adapter needs the "
-                        "WinUSB driver (e.g. via Zadig).",
-                        libusb_error_name(rc));
+            SPDLOG_WARN("[gcadapter] opened the adapter but could not claim interface 0: {}. The OS or another "
+                        "process is holding it; {}. Leaving the adapter to the SDL input path.",
+                        libusb_error_name(rc), kGCAccessHint);
         }
         libusb_close(h);
         RetryPending = true;
@@ -316,7 +366,14 @@ bool GCAdapter::Start() {
         mImpl->HotplugRegistered = rc == LIBUSB_SUCCESS;
     }
     SPDLOG_INFO("[gcadapter] started (hotplug={})", mImpl->HotplugRegistered);
-    mImpl->AttachHint = true;
+
+    // One synchronous attempt before the reader thread starts, so callers can
+    // tell whether we actually own the adapter while there is still time to act
+    // on it -- ControlDeck::PreInitGCAdapter only hides the device from SDL if
+    // this succeeded, and it runs before SDL_Init.
+    mImpl->TryOpen();
+
+    mImpl->AttachHint = false;
     mImpl->Running = true;
     mImpl->Thread = std::thread([this] { mImpl->Run(); });
     return true;

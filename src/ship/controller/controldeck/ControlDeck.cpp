@@ -94,9 +94,24 @@ void ControlDeck::PreInitGCAdapter() {
         return;
     }
     mGCAdapter = std::move(adapter);
-    // On macOS/Windows the adapter can also surface as a plain HID joystick;
-    // keep SDL from opening it so it doesn't fight libusb for the interface.
-    mConnectedPhysicalDeviceManager->IgnoreDeviceGlobally(gGCAdapterVid, gGCAdapterPid);
+
+    // On macOS/Windows the adapter can also surface as a plain HID joystick, so
+    // hide it from SDL to stop the two backends fighting over the interface --
+    // but ONLY once we have actually claimed it. Hiding it unconditionally
+    // would make the adapter unusable by *either* backend on a machine where
+    // libusb cannot open it (no WinUSB driver, no udev rule, or the OS HID
+    // driver refusing to let go), which is strictly worse than leaving it to
+    // SDL. Start() has already made one synchronous attempt by this point.
+    //
+    // Known gap: an adapter plugged in *after* startup is claimed by the reader
+    // thread without SDL being told, so on macOS both backends can end up
+    // reading it. Startup is the common case and the one that can regress.
+    if (mGCAdapter->IsConnected()) {
+        mConnectedPhysicalDeviceManager->IgnoreDeviceGlobally(gGCAdapterVid, gGCAdapterPid);
+    } else {
+        SPDLOG_INFO("ControlDeck::PreInitGCAdapter: no adapter claimed at startup; leaving {:04x}:{:04x} to SDL",
+                    gGCAdapterVid, gGCAdapterPid);
+    }
 }
 
 void ControlDeck::ShutdownGCAdapter() {
